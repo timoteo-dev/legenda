@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Legenda ao Vivo</title>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: #000;
+    color: #fff;
+    font-family: system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+  }
+  #wrap {
+    height: 100%;
+    padding: 4vh 5vw;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+  #content {
+    font-size: 5.2vw;
+    line-height: 1.4;
+    font-weight: 700;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+  }
+  #interim {
+    font-weight: 400;
+    font-style: italic;
+    color: #999;
+  }
+  #dot {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #4ade80;
+    box-shadow: 0 0 8px currentColor;
+  }
+  #dot.warn { background: #facc15; }
+  #dot.err { background: #f87171; }
+</style>
+</head>
+<body>
+  <div id="dot" title="status da conexao"></div>
+  <div id="wrap">
+    <div id="content">
+      <span id="final"></span><span id="interim"></span>
+    </div>
+  </div>
+
+<script>
+const finalEl = document.getElementById('final');
+const interimEl = document.getElementById('interim');
+const dot = document.getElementById('dot');
+
+let finalLines = [];
+const MAX_LINES = 12; // cobrindo mais espaco do telao
+
+function renderFinal() {
+  finalEl.textContent = finalLines.join(' ') + (finalLines.length ? ' ' : '');
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const socket = new WebSocket(`${proto}://${location.host}/captions`);
+
+  socket.onopen = () => { dot.className = ''; };
+  socket.onclose = () => {
+    dot.className = 'err';
+    setTimeout(connect, 1000);
+  };
+  socket.onerror = () => { dot.className = 'err'; };
+
+  socket.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+
+    if (msg.type === 'interim') {
+      interimEl.textContent = msg.text;
+    } else if (msg.type === 'final') {
+      interimEl.textContent = '';
+      finalLines.push(msg.text);
+      if (finalLines.length > MAX_LINES) finalLines.shift();
+      renderFinal();
+    } else if (msg.type === 'status') {
+      dot.className = msg.state === 'ao_vivo' ? '' : 'warn';
+    }
+  };
+}
+
+connect();
+</script>
+</body>
+</html>

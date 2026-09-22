@@ -1,0 +1,15 @@
+{
+  "name": "legendas-ao-vivo-igreja",
+  "version": "1.0.0",
+  "description": "Legendas ao vivo para pregacao usando Gemini 3.5 Transcribe Live",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file=.env server.js"
+  },
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

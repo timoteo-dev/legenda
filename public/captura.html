@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Captura de Audio - Legendas ao Vivo</title>
+<style>
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #111;
+    color: #eee;
+    padding: 2rem;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.4rem; }
+  select, button {
+    font-size: 1.1rem;
+    padding: 0.7rem;
+    margin: 0.5rem 0;
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid #444;
+    background: #1c1c1c;
+    color: #eee;
+  }
+  button { cursor: pointer; font-weight: 600; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #startBtn { background: #16a34a; border-color: #16a34a; }
+  #stopBtn { background: #b91c1c; border-color: #b91c1c; }
+  #status { font-size: 1.2rem; font-weight: bold; margin-top: 1rem; }
+  .ok { color: #4ade80; }
+  .warn { color: #facc15; }
+  .err { color: #f87171; }
+  #meter { height: 14px; background: #333; border-radius: 7px; overflow: hidden; margin-top: 0.8rem; }
+  #meter-fill { height: 100%; width: 0%; background: #4ade80; transition: width 0.05s linear; }
+  p.hint { color: #999; font-size: 0.95rem; }
+</style>
+</head>
+<body>
+  <h1>Captura de Audio</h1>
+  <p class="hint">
+    Rode esta pagina na maquina ligada na mesa digital (Soundcraft Ui24R via cabo USB).
+    Deixe esta aba aberta durante toda a pregacao.
+  </p>
+
+  <label for="deviceSelect">Dispositivo de entrada de audio:</label>
+  <select id="deviceSelect"></select>
+
+  <button id="startBtn">Iniciar captura</button>
+  <button id="stopBtn" disabled>Parar captura</button>
+
+  <div id="meter"><div id="meter-fill"></div></div>
+  <div id="status">Parado</div>
+
+<script>
+let audioContext, workletNode, mediaStream, sourceNode, socket;
+const deviceSelect = document.getElementById('deviceSelect');
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const statusEl = document.getElementById('status');
+const meterFill = document.getElementById('meter-fill');
+
+async function listDevices() {
+  const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  tempStream.getTracks().forEach((t) => t.stop());
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  deviceSelect.innerHTML = devices
+    .filter((d) => d.kind === 'audioinput')
+    .map((d, i) => `<option value="${d.deviceId}">${d.label || `Entrada de audio ${i + 1}`}</option>`)
+    .join('');
+}
+
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = cls || '';
+}
+
+function connectSocket() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  socket = new WebSocket(`${proto}://${location.host}/capture`);
+  socket.binaryType = 'arraybuffer';
+
+  socket.onopen = () => setStatus('Conectado ao servidor - capturando audio', 'ok');
+  socket.onclose = () => {
+    setStatus('Desconectado do servidor. Tentando reconectar...', 'warn');
+    if (mediaStream) setTimeout(connectSocket, 1000);
+  };
+  socket.onerror = () => setStatus('Erro na conexao com o servidor', 'err');
+}
+
+async function start() {
+  const deviceId = deviceSelect.value;
+
+  // echoCancellation / noiseSuppression / autoGainControl desligados de
+  // proposito: essas "melhorias" do navegador atrapalham a precisao da
+  // transcricao. Melhor deixar o audio cru chegar ao Gemini.
+  mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      deviceId: deviceId ? { exact: deviceId } : undefined,
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1,
+    },
+  });
+
+  audioContext = new AudioContext();
+  await audioContext.resume();
+  await audioContext.audioWorklet.addModule('audio-worklet.js');
+  sourceNode = audioContext.createMediaStreamSource(mediaStream);
+  workletNode = new AudioWorkletNode(audioContext, 'pcm-downsampler');
+
+  workletNode.port.onmessage = (event) => {
+    const pcmBuffer = event.data;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(pcmBuffer);
+    }
+    let peak = 0;
+    for (const v of new Int16Array(pcmBuffer)) peak = Math.max(peak, Math.abs(v));
+    meterFill.style.width = `${Math.min(100, (peak / 32767) * 140)}%`;
+  };
+
+  const muteNode = audioContext.createGain();
+  muteNode.gain.value = 0;
+  sourceNode.connect(workletNode);
+  workletNode.connect(muteNode);
+  muteNode.connect(audioContext.destination);
+  connectSocket();
+
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+  setStatus('Capturando audio...', 'ok');
+}
+
+function stop() {
+  if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
+  if (audioContext) audioContext.close();
+  if (socket) socket.close();
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  meterFill.style.width = '0%';
+  setStatus('Parado');
+}
+
+startBtn.addEventListener('click', () => start().catch((e) => setStatus('Erro: ' + e.message, 'err')));
+stopBtn.addEventListener('click', stop);
+
+listDevices().catch((e) => setStatus('Nao foi possivel listar dispositivos: ' + e.message, 'err'));
+</script>
+</body>
+</html>
