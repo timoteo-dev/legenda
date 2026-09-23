@@ -49,6 +49,7 @@ function broadcastCaption(payload) {
 // Ponte com o Gemini Live API
 const bridge = {
   ws: null,
+  ready: false,
   sessionHandle: null,
   reconnecting: false,
   outgoingQueue: [],
@@ -66,26 +67,24 @@ function connectGemini() {
 
   bridge.ws.on('open', () => {
     console.log('[Gemini] Conexao aberta, enviando setup...');
-    const setupMessage = {
-      setup: {
-        model: GEMINI_MODEL,
-        generationConfig: { responseModalities: ['TEXT'] },
-        inputAudioTranscription: { languageCodes: [LANGUAGE_CODE] },
-        sessionResumption: { handle: bridge.sessionHandle || null },
-      },
+    const setup = {
+      model: GEMINI_MODEL,
+      generationConfig: { responseModalities: ['TEXT'] },
+      inputAudioTranscription: { languageCodes: [LANGUAGE_CODE] },
     };
+    if (bridge.sessionHandle) setup.sessionResumption = { handle: bridge.sessionHandle };
 
-    bridge.ws.send(JSON.stringify(setupMessage));
+    bridge.ws.send(JSON.stringify({ setup }));
     bridge.reconnecting = false;
     bridge.lastTranscriptAt = Date.now();
-    flushQueue();
-    broadcastCaption({ type: 'status', state: 'ao_vivo' });
   });
 
   bridge.ws.on('message', handleGeminiMessage);
 
   bridge.ws.on('close', (code, reasonBuf) => {
     console.warn(`[Gemini] Conexao fechada (${code}). ${reasonBuf ? reasonBuf.toString() : ''}`);
+    bridge.ready = false;
+    if (code === 1008) bridge.sessionHandle = null;
     if (bridge.shouldReconnect) scheduleReconnect();
   });
 
@@ -98,6 +97,14 @@ function handleGeminiMessage(raw) {
     response = JSON.parse(raw.toString());
   } catch (e) {
     return console.error('[Gemini] Erro de parse JSON:', e.message);
+  }
+
+  if (response.setupComplete) {
+    console.log('[Gemini] Setup concluido.');
+    bridge.ready = true;
+    flushQueue();
+    broadcastCaption({ type: 'status', state: 'ao_vivo' });
+    return;
   }
 
   if (response.goAway && !bridge.goAwayTimer) {
@@ -136,9 +143,11 @@ function scheduleReconnect() {
   setTimeout(connectGemini, 500);
 }
 
-function isSpeechActive(pcmBuffer) {
-  const view = new Int16Array(pcmBuffer.buffer, pcmBuffer.byteOffset, Math.floor(pcmBuffer.length / 2));
-  return view.some((s) => Math.abs(s) > 500);
+function isSpeechActive(buf) {
+  for (let i = 0; i < buf.length - 1; i += 2) {
+    if (Math.abs(buf.readInt16LE(i)) > 500) return true;
+  }
+  return false;
 }
 
 function sendAudioChunk(pcmBuffer) {
@@ -153,16 +162,16 @@ function sendAudioChunk(pcmBuffer) {
     },
   });
 
-  if (bridge.ws?.readyState === WebSocket.OPEN) {
+  if (bridge.ready && bridge.ws?.readyState === WebSocket.OPEN) {
     bridge.ws.send(message);
   } else {
     bridge.outgoingQueue.push(message);
-    if (bridge.outgoingQueue.length > 150) bridge.outgoingQueue.shift();
+    if (bridge.outgoingQueue.length > 50) bridge.outgoingQueue.shift();
   }
 }
 
 function flushQueue() {
-  while (bridge.outgoingQueue.length && bridge.ws?.readyState === WebSocket.OPEN) {
+  while (bridge.outgoingQueue.length && bridge.ready && bridge.ws?.readyState === WebSocket.OPEN) {
     bridge.ws.send(bridge.outgoingQueue.shift());
   }
 }

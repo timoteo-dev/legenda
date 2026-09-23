@@ -105,7 +105,7 @@ async function start() {
     },
   });
 
-  audioContext = new AudioContext();
+  audioContext = new AudioContext({ sampleRate: 16000, latencyHint: 'interactive' });
   await audioContext.resume();
   await audioContext.audioWorklet.addModule('audio-worklet.js');
   sourceNode = audioContext.createMediaStreamSource(mediaStream);
