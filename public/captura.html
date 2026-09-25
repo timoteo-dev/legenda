@@ -113,9 +113,16 @@ async function start() {
   workletNode = new AudioWorkletNode(audioContext, 'pcm-downsampler');
 
   workletNode.port.onmessage = (event) => {
-    const pcmBuffer = event.data;
+    const data = event.data;
+    const pcmBuffer = data.pcm || data;
+    const capturedAt = data.capturedAt || Date.now();
+
     if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(pcmBuffer);
+      // Anexa timestamp de captura (8 bytes Float64) no início do pacote para instrumentação de latência ponta a ponta
+      const packet = new Uint8Array(8 + pcmBuffer.byteLength);
+      new DataView(packet.buffer).setFloat64(0, capturedAt, true);
+      packet.set(new Uint8Array(pcmBuffer), 8);
+      socket.send(packet.buffer);
     }
     let peak = 0;
     for (const v of new Int16Array(pcmBuffer)) peak = Math.max(peak, Math.abs(v));

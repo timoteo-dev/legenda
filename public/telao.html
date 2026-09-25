@@ -62,8 +62,31 @@ const dot = document.getElementById('dot');
 let finalLines = [];
 const MAX_LINES = 12; // cobrindo mais espaco do telao
 
+let pendingInterim = null;
+let hasFinalUpdate = false;
+let rafId = null;
+
 function renderFinal() {
   finalEl.textContent = finalLines.join(' ') + (finalLines.length ? ' ' : '');
+}
+
+function flushDOM() {
+  rafId = null;
+  if (hasFinalUpdate) {
+    interimEl.textContent = '';
+    renderFinal();
+    hasFinalUpdate = false;
+  }
+  if (pendingInterim !== null) {
+    interimEl.textContent = pendingInterim;
+    pendingInterim = null;
+  }
+}
+
+function scheduleRender() {
+  if (!rafId) {
+    rafId = requestAnimationFrame(flushDOM);
+  }
 }
 
 function connect() {
@@ -81,12 +104,14 @@ function connect() {
     const msg = JSON.parse(event.data);
 
     if (msg.type === 'interim') {
-      interimEl.textContent = msg.text;
+      pendingInterim = msg.text;
+      scheduleRender();
     } else if (msg.type === 'final') {
-      interimEl.textContent = '';
+      pendingInterim = '';
       finalLines.push(msg.text);
       if (finalLines.length > MAX_LINES) finalLines.shift();
-      renderFinal();
+      hasFinalUpdate = true;
+      scheduleRender();
     } else if (msg.type === 'status') {
       dot.className = msg.state === 'ao_vivo' ? '' : 'warn';
     }

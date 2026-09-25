@@ -4,7 +4,8 @@
   "description": "Legendas ao vivo para pregacao usando Gemini 3.5 Transcribe Live",
   "main": "server.js",
   "scripts": {
-    "start": "node --env-file=.env server.js"
+    "start": "node --env-file=.env server.js",
+    "test": "node test-low-latency.js"
   },
   "engines": {
     "node": ">=20.6.0"
